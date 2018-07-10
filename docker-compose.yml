@@ -1,137 +1,570 @@
-version: '2.1'
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Service Task Generic
+Parameters:
+  DockerImagePrometheus:
+    ConstraintDescription: ''
+    Type: String
+    Description: Docker Image URL
 
-networks:
-  monitor-net:
-    driver: bridge
+  DockerImageAlertManager:
+    ConstraintDescription: ''
+    Type: String
+    Description: Docker Image URL
+    
+  serviceECSCluster:
+    Default: "clusterallenvs"
+    Type: String
+    Description: ECS Cluster for service
 
-volumes:
-    prometheus_data: {}
-    grafana_data: {}
+  MemoryReservation:
+    Default: "300"
+    Type: String
 
-services:
+  CPU:
+    Default: 10
+    Type: Number
 
-  prometheus:
-    image: prom/prometheus:v2.2.0-rc.0
-    container_name: prometheus
-    volumes:
-      - ./prometheus/:/etc/prometheus/
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention=200h'
-      - '--web.enable-lifecycle'
-    restart: unless-stopped
-    expose:
-      - 9090
-    networks:
-      - monitor-net
-    labels:
-      org.label-schema.group: "monitoring"
-  
-  alertmanager:
-    image: prom/alertmanager:v0.14.0
-    container_name: alertmanager
-    volumes: 
-      - ./alertmanager/:/etc/alertmanager/
-    command:
-      - '--config.file=/etc/alertmanager/config.yml'
-      - '--storage.path=/alertmanager'
-    restart: unless-stopped
-    expose:
-      - 9093
-    networks:
-      - monitor-net
-    labels:
-      org.label-schema.group: "monitoring"
+  DesiredCount:
+    Default: 1
+    Type: Number
 
-  nodeexporter:
-    image: prom/node-exporter:v0.15.2
-    container_name: nodeexporter
-    user: root
-    privileged: true
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
-    restart: unless-stopped
-    expose:
-      - 9100
-    networks:
-      - monitor-net
-    labels:
-      org.label-schema.group: "monitoring"
+  DesiredCountExporters: 
+    Default: 2
+    Type: String
+    Description: Number of Instances on Cluster
 
-  cadvisor:
-    image: google/cadvisor:v0.28.3
-    container_name: cadvisor
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:rw
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      #- /cgroup:/cgroup:ro #doesn't work on MacOS only for Linux
-    restart: unless-stopped
-    expose:
-      - 8080
-    networks:
-      - monitor-net
-    labels:
-      org.label-schema.group: "monitoring"
-  
-  grafana:
-    image: grafana/grafana:4.6.3
-    container_name: grafana
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/datasources:/etc/grafana/datasources
-      - ./grafana/dashboards:/etc/grafana/dashboards
-      - ./grafana/setup.sh:/setup.sh
-    entrypoint: /setup.sh
-    environment:
-      - GF_SECURITY_ADMIN_USER=${ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
-      - GF_USERS_ALLOW_SIGN_UP=false
-    restart: unless-stopped
-    expose:
-      - 3000
-    networks:
-      - monitor-net
-    labels:
-      org.label-schema.group: "monitoring"
+  TgPriorityGrafana:
+    Type: String
 
-  pushgateway:
-    image: prom/pushgateway
-    container_name: pushgateway
-    restart: unless-stopped
-    expose:
-      - 9091
-    networks:
-      - monitor-net
-    labels:
-      org.label-schema.group: "monitoring"
+  TgURLGrafana:
+    Type: String
 
-  caddy:
-    image: stefanprodan/caddy
-    container_name: caddy
-    ports:
-      - "3000:3000"
-      - "9090:9090"
-      - "9093:9093"
-      - "9091:9091"
-    volumes:
-      - ./caddy/:/etc/caddy/
-    environment:
-      - ADMIN_USER=${ADMIN_USER:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
-    restart: unless-stopped
-    networks:
-      - monitor-net
-    labels:
-      org.label-schema.group: "monitoring"
+  TgPriorityPrometheus:
+    Type: String
+
+  TgURLPrometheus:
+    Type: String
+
+  TgURLCadvisor:
+    Type: String
+
+  TgPriorityCadvisor:
+    Type: String
+
+  TgURLAlertManager:
+    Type: String
+
+  TgPriorityAlertManager:
+    Type: String
+
+  TgURLNodeExporter:
+    Type: String
+
+  TgPriorityNodeExporter:
+    Type: String
+
+  ListenerArn:
+    Type: String
+
+  DNSResourceRecords:
+    Type: String
+
+  TargetVpcID:
+    Type: String
+
+  HostedZoneId:
+    Type: String
+
+Resources:
+##################################################GRAFANA###################################################
+  ListenerRuleGrafana:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ListenerArn
+      Priority: !Ref TgPriorityGrafana
+      Conditions:
+          - Field: host-header
+            Values:
+              - !Ref TgURLGrafana
+      Actions:
+          - TargetGroupArn: !Ref TargetGroupGrafana
+            Type: forward
+
+  TargetGroupGrafana:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub tidy-allenvs-grafana
+      VpcId: !Ref TargetVpcID
+      Port: 80
+      Protocol: HTTP
+      Matcher:
+          HttpCode: 200-302
+      HealthCheckIntervalSeconds: 65
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 60
+      HealthyThresholdCount: 2
+
+  DNSGrafana:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      Comment: Alias Record
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Ref TgURLGrafana
+          Type: CNAME
+          TTL: 60
+          ResourceRecords:
+            - !Ref DNSResourceRecords
+
+  serviceECSServiceGrafana:
+    DependsOn: ListenerRuleGrafana
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref serviceECSCluster
+      TaskDefinition: !Ref servicetaskdefinitionGrafana
+      DesiredCount: !Ref DesiredCount
+      DeploymentConfiguration:
+        MaximumPercent: 100
+        MinimumHealthyPercent: 50
+      LoadBalancers:
+          - ContainerName: grafana
+            ContainerPort: 3000
+            TargetGroupArn: !Ref TargetGroupGrafana
+      PlacementConstraints:
+        - Type: distinctInstance
+      PlacementStrategies:
+        - Field: instanceId
+          Type: spread
+
+  servicetaskdefinitionGrafana:
+    Type: AWS::ECS::TaskDefinition
+    Properties:   
+      Volumes:
+      - Name: grafana_data
+        Host: 
+          SourcePath: "/var/lib/grafana"
+      - Name: grafana_datasources
+        Host: 
+          SourcePath: "/etc/grafana/datasources"
+      - Name: grafana_dashboards
+        Host: 
+          SourcePath: "/etc/grafana/dashboards"
+      - Name: grafana_setup
+        Host: 
+          SourcePath: "/setup.sh"
+      ContainerDefinitions:
+      - Name: grafana
+        Image: grafana/grafana:4.6.3
+        PortMappings:
+        - HostPort: 3000
+          ContainerPort: 3000
+        Essential: true
+        Command: []
+        MountPoints:
+        - SourceVolume: grafana_data
+          ContainerPath: "/var/lib/grafana"
+        - SourceVolume: grafana_datasources
+          ContainerPath: "/etc/grafana/datasources"
+        - SourceVolume: grafana_dashboards
+          ContainerPath: "/etc/grafana/dashboards"
+        - SourceVolume: grafana_setup
+          ContainerPath: "/setup.sh"  
+        MemoryReservation: !Ref MemoryReservation
+        Environment:
+        - Name: GF_SECURITY_ADMIN_USER
+          Value: admin
+        - Name: GF_SECURITY_ADMIN_PASSWORD
+          Value: admin
+        - Name: GF_USERS_ALLOW_SIGN_UP
+          Value: false
+        Cpu: !Ref CPU
+        Ulimits:
+        - HardLimit: 90000
+          Name: nofile
+          SoftLimit: 90000
+
+##################################################PROMETHEUS####################################################
+  ListenerRulePrometheus:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ListenerArn
+      Priority: !Ref TgPriorityPrometheus
+      Conditions:
+          - Field: host-header
+            Values:
+              - !Ref TgURLGrafana
+      Actions:
+          - TargetGroupArn: !Ref TargetGroupPrometheus
+            Type: forward
+
+  TargetGroupPrometheus:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub tidy-allenvs-prometheus
+      VpcId: !Ref TargetVpcID
+      Port: 80
+      Protocol: HTTP
+      Matcher:
+          HttpCode: 200-302
+      HealthCheckIntervalSeconds: 65
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 60
+      HealthyThresholdCount: 2
+
+  DNSPrometheus:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      Comment: Alias Record
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Ref TgURLPrometheus
+          Type: CNAME
+          TTL: 60
+          ResourceRecords:
+            - !Ref DNSResourceRecords
+
+  serviceECSServicePrometheus:
+    DependsOn: ListenerRulePrometheus
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref serviceECSCluster
+      TaskDefinition: !Ref servicetaskdefinitionPrometheus
+      DesiredCount: !Ref DesiredCount
+      DeploymentConfiguration:
+        MaximumPercent: 100
+        MinimumHealthyPercent: 50
+      LoadBalancers:
+          - ContainerName: prometheus
+            ContainerPort: 9090
+            TargetGroupArn: !Ref TargetGroupPrometheus
+      PlacementConstraints:
+        - Type: distinctInstance
+      PlacementStrategies:
+        - Field: instanceId
+          Type: spread
+
+  servicetaskdefinitionPrometheus:
+    Type: AWS::ECS::TaskDefinition
+    Properties:   
+      Volumes:
+      - Name: prometheus
+        Host: 
+          SourcePath: "/etc/prometheus/"
+      ContainerDefinitions:
+      - Name: prometheus
+        Image: !Ref DockerImagePrometheus
+        PortMappings:
+        - HostPort: 9090
+          ContainerPort: 9090
+        Essential: true
+        Privileged: true
+        Command:
+        - '--config.file=/etc/prometheus/prometheus.yml'
+        - '--storage.tsdb.path=/prometheus'
+        - '--storage.tsdb.retention=200h'
+        - '--web.enable-lifecycle'
+        MountPoints:
+        - SourceVolume: prometheus
+          ContainerPath: "/prometheus/"
+        - SourceVolume: prometheus_data
+          ContainerPath: "/prometheus"
+        MemoryReservation: !Ref MemoryReservation
+        Cpu: !Ref CPU
+        Ulimits:
+        - HardLimit: 90000
+          Name: nofile
+          SoftLimit: 90000
+
+###################################################CADVISOR##################################
+  ListenerRuleCadvisor:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ListenerArn
+      Priority: !Ref TgPriorityCadvisor
+      Conditions:
+          - Field: host-header
+            Values:
+              - !Ref TgURLCadvisor
+      Actions:
+          - TargetGroupArn: !Ref TargetGroupCadvisor
+            Type: forward
+
+  TargetGroupCadvisor:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub tidy-allenvs-cadvisor
+      VpcId: !Ref TargetVpcID
+      Port: 80
+      Protocol: HTTP
+      Matcher:
+          HttpCode: 200-307
+      HealthCheckIntervalSeconds: 65
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 60
+      HealthyThresholdCount: 2
+
+  DNSCasvisor:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      Comment: Alias Record
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Ref TgURLCadvisor
+          Type: CNAME
+          TTL: 60
+          ResourceRecords:
+            - !Ref DNSResourceRecords
+
+  serviceECSServiceCadvisor:
+    DependsOn: ListenerRuleCadvisor
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref serviceECSCluster
+      TaskDefinition: !Ref servicetaskdefinitionCadvisor
+      DesiredCount: !Ref DesiredCountExporters
+      DeploymentConfiguration:
+        MaximumPercent: 100
+        MinimumHealthyPercent: 50
+      LoadBalancers:
+          - ContainerName: cadvisor
+            ContainerPort: 8080
+            TargetGroupArn: !Ref TargetGroupCadvisor
+      PlacementConstraints:
+        - Type: distinctInstance
+      PlacementStrategies:
+        - Field: instanceId
+          Type: spread
+
+  servicetaskdefinitionCadvisor:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Volumes:
+      - Name: data
+        Host:
+          SourcePath: "/data"
+      - Name: dockerSocket
+        Host:
+          SourcePath: "/var/run/docker.sock"
+      - Name: root
+        Host:
+          SourcePath: "/"
+      - Name: var_run
+        Host:
+          SourcePath: "/var/run"
+      - Name: var_lib_docker
+        Host:
+          SourcePath: "/var/lib/docker"
+      ContainerDefinitions:
+      - Name: cadvisor
+        Image: google/cadvisor
+        PortMappings:
+        - HostPort: 8080
+          ContainerPort: 8080
+        Essential: true
+        Command: []
+        MountPoints:
+        - SourceVolume: dockerSocket
+          ContainerPath: "/tmp/docker.sock"
+        - SourceVolume: root
+          ContainerPath: "/rootfs"
+        - SourceVolume: var_run
+          ContainerPath: "/var/run"
+        - SourceVolume: var_lib_docker
+          ContainerPath: "/var/lib/docker"  
+        MemoryReservation: !Ref MemoryReservation
+        Cpu: !Ref CPU
+        Ulimits:
+        - HardLimit: 90000
+          Name: nofile
+          SoftLimit: 90000
+
+#################################################AlertManager################################################
+  ListenerRuleAlertManager:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ListenerArn
+      Priority: !Ref TgPriorityAlertManager
+      Conditions:
+          - Field: host-header
+            Values:
+              - !Ref TgURLAlertManager
+      Actions:
+          - TargetGroupArn: !Ref TargetGroupAlertManager
+            Type: forward
+
+  TargetGroupAlertManager:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub tidy-allenvs-AlertManager
+      VpcId: !Ref TargetVpcID
+      Port: 80
+      Protocol: HTTP
+      Matcher:
+          HttpCode: 200-302
+      HealthCheckIntervalSeconds: 65
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 60
+      HealthyThresholdCount: 2
+
+  DNSAlertManager:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      Comment: Alias Record
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Ref TgURLAlertManager
+          Type: CNAME
+          TTL: 60
+          ResourceRecords:
+            - !Ref DNSResourceRecords
+
+  serviceECSServiceAlertManager:
+    DependsOn: ListenerRuleAlertManager
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref serviceECSCluster
+      TaskDefinition: !Ref servicetaskdefinitionAlertManager
+      DesiredCount: !Ref DesiredCount
+      DeploymentConfiguration:
+        MaximumPercent: 100
+        MinimumHealthyPercent: 50
+      LoadBalancers:
+          - ContainerName: alertmanager
+            ContainerPort: 9093
+            TargetGroupArn: !Ref TargetGroupAlertManager
+      PlacementConstraints:
+        - Type: distinctInstance
+      PlacementStrategies:
+        - Field: instanceId
+          Type: spread
+
+  servicetaskdefinitionAlertManager:
+    Type: AWS::ECS::TaskDefinition
+    Properties:   
+      Volumes:
+      - Name: alertmanager
+        Host: 
+          SourcePath: "/etc/alertmanager/"
+      ContainerDefinitions:
+      - Name: alertmanager
+        Image: !Ref DockerImageAlertManager
+        PortMappings:
+        - HostPort: 9093
+          ContainerPort: 9093
+        Essential: true
+        Command: 
+        - '--config.file=/etc/alertmanager/config.yml'
+        - '--storage.path=/alertmanager'
+        MountPoints:
+        - SourceVolume: alertmanager
+          ContainerPath: "/alertmanager"  
+        MemoryReservation: !Ref MemoryReservation
+        Cpu: !Ref CPU
+        Ulimits:
+        - HardLimit: 90000
+          Name: nofile
+          SoftLimit: 90000
+
+#################################################NodeExporter################################################
+  ListenerRuleNodeExporter:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ListenerArn
+      Priority: !Ref TgPriorityNodeExporter
+      Conditions:
+          - Field: host-header
+            Values:
+              - !Ref TgURLNodeExporter
+      Actions:
+          - TargetGroupArn: !Ref TargetGroupNodeExporter
+            Type: forward
+
+  TargetGroupNodeExporter:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub tidy-allenvs-NodeExporter
+      VpcId: !Ref TargetVpcID
+      Port: 80
+      Protocol: HTTP
+      Matcher:
+          HttpCode: 200-302
+      HealthCheckIntervalSeconds: 65
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 60
+      HealthyThresholdCount: 2
+
+  DNSNodeExporter:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      Comment: Alias Record
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Ref TgURLNodeExporter
+          Type: CNAME
+          TTL: 60
+          ResourceRecords:
+            - !Ref DNSResourceRecords
+
+  serviceECSServiceNodeExporter:
+    DependsOn: ListenerRuleNodeExporter
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref serviceECSCluster
+      TaskDefinition: !Ref servicetaskdefinitionNodeExporter
+      DesiredCount: !Ref DesiredCountExporters
+      DeploymentConfiguration:
+        MaximumPercent: 100
+        MinimumHealthyPercent: 50
+      LoadBalancers:
+          - ContainerName: nodeexporter
+            ContainerPort: 9100
+            TargetGroupArn: !Ref TargetGroupNodeExporter
+      PlacementConstraints:
+        - Type: distinctInstance
+      PlacementStrategies:
+        - Field: instanceId
+          Type: spread
+
+  servicetaskdefinitionNodeExporter:
+    Type: AWS::ECS::TaskDefinition
+    Properties:   
+      Volumes:
+      - Name: proc
+        Host: 
+          SourcePath: "/host/proc"
+      - Name: sys
+        Host: 
+          SourcePath: "/host/sys"
+      - Name: root
+        Host: 
+          SourcePath: "/rootfs"
+      ContainerDefinitions:
+      - Name: nodeexporter
+        Image: prom/node-exporter
+        PortMappings:
+        - HostPort: 9100
+          ContainerPort: 9100
+        Essential: true
+        Command: 
+        - '--path.procfs=/host/proc'
+        - '--path.sysfs=/host/sys'
+        - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+        MountPoints:
+        - SourceVolume: proc
+          ContainerPath: "/host/proc"
+        - SourceVolume: sys
+          ContainerPath: "/host/sys"
+        - SourceVolume: root
+          ContainerPath: "/rootfs"  
+        MemoryReservation: !Ref MemoryReservation
+        Cpu: !Ref CPU
+        Ulimits:
+        - HardLimit: 90000
+          Name: nofile
+          SoftLimit: 90000
