@@ -25,7 +25,7 @@ grafana_api() {
   [[ -n "${params}" ]] && cmd="${cmd} -d \"${params}\""
   [[ -n "${bodyfile}" ]] && cmd="${cmd} --data @${bodyfile}"
   echo "Running ${cmd}"
-  eval ${cmd} || return 1
+  curl -L -s --fail -H \"Accept: application/json\" -H \"Content-Type: application/json\" -X ${verb} -k ${GRAFANA_URL}${url} || return 1
   return 0
 }
 
