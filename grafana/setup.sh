@@ -13,28 +13,28 @@ DATASOURCES_PATH=${DATASOURCES_PATH:-/etc/grafana/datasources}
 DASHBOARDS_PATH=${DASHBOARDS_PATH:-/etc/grafana/dashboards}
 
 # Generic function to call the Vault API
-grafana_api() {
-  local verb=$1
-  local url=$2
-  local params=$3
-  local bodyfile=$4
-  local response
-  local cmd
+#grafana_api() {
+ # local verb=$1
+  #local url=$2
+  #local params=$3
+  #local bodyfile=$4
+  #local response
+  #local cmd
 
-  cmd="curl -L -s --fail -H \"Accept: application/json\" -H \"Content-Type: application/json\" -X ${verb} -k ${GRAFANA_URL}${url}"
-  [[ -n "${params}" ]] && cmd="${cmd} -d \"${params}\""
-  [[ -n "${bodyfile}" ]] && cmd="${cmd} --data @${bodyfile}"
-  echo "Running ${cmd}"
-  eval ${cmd} || return 1
-  return 0
-}
+  #cmd="curl -L -s --fail -H \"Accept: application/json\" -H \"Content-Type: application/json\" -X ${verb} -k ${GRAFANA_URL}${url}"
+  #[[ -n "${params}" ]] && cmd="${cmd} -d \"${params}\""
+  #[[ -n "${bodyfile}" ]] && cmd="${cmd} --data @${bodyfile}"
+  #echo "Running ${cmd}"
+  #eval ${cmd} || return 1
+  #return 0
+#}
 
-wait_for_api() {
-  while ! grafana_api GET /api/user/preferences
-  do
-    sleep 5
-  done 
-}
+#wait_for_api() {
+ # while ! grafana_api GET /api/user/preferences
+ # do
+  #  sleep 5
+  #done 
+#}
 
 install_datasources() {
   local datasource
@@ -74,7 +74,7 @@ install_dashboards() {
 }
 
 configure_grafana() {
-  wait_for_api
+  #wait_for_api
   install_datasources
   install_dashboards
 }
